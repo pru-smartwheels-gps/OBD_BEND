@@ -68,7 +68,10 @@ const deviceServer = net.createServer((socket) => {
    // console.log('📤 Raw data buffer (formatted):', formatted);
   
    const parsed = parse(raw);
+
+   console.log('⏰ Timestamp:', new Date().toISOString());
    console.log('✅ Parsed message:\n', parsed);
+   console.log('='.repeat(50) + '\n');
     // Uncomment this line to enable parsing
     // const parsed = parseGS22LocationPacket(hexStr);
     // console.log('📤 Parsed:', parsed);
