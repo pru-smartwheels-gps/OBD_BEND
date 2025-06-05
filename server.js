@@ -65,10 +65,10 @@ const deviceServer = net.createServer((socket) => {
     const raw  = data.toString('hex')
     const formatted  =data.toString('hex').match(/.{1,2}/g).join(' ')
     console.log('📤 Raw data buffer (complete):', raw);
-    console.log('📤 Raw data buffer (formatted):', formatted);
+   // console.log('📤 Raw data buffer (formatted):', formatted);
   
-
-
+   const parsed = parse(example);
+   console.log('✅ Parsed message:\n', parsed);
     // Uncomment this line to enable parsing
     // const parsed = parseGS22LocationPacket(hexStr);
     // console.log('📤 Parsed:', parsed);
@@ -196,3 +196,178 @@ frontendServer.on('listening', () => {
 frontendServer.listen(CLIENT_PORT, () => {
   console.log(`🧭 Flutter TCP server ready on port ${CLIENT_PORT}`);
 });
+
+
+/// parsing logic
+function hexToBytes(hex) {
+  const cleaned = hex.replace(/[^0-9a-fA-F]/g, '');
+  const result = [];
+  for (let i = 0; i < cleaned.length; i += 2) {
+    result.push(parseInt(cleaned.substr(i, 2), 16));
+  }
+  return new Uint8Array(result);
+}
+
+function readWord(bytes, offset) {
+  return (bytes[offset] << 8) | bytes[offset + 1];
+}
+
+function readDWord(bytes, offset) {
+  return (
+    (bytes[offset] << 24) |
+    (bytes[offset + 1] << 16) |
+    (bytes[offset + 2] << 8) |
+    bytes[offset + 3]
+  );
+}
+
+function readBytes(bytes, offset, length) {
+  return bytes.slice(offset, offset + length);
+}
+
+function readBcd(bytes, offset, length) {
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    const byte = bytes[offset + i];
+    const high = (byte >> 4) & 0x0F;
+    const low = byte & 0x0F;
+    result += `${high}${low}`;
+  }
+  return result.replace(/^0+(?!$)/, ''); // Remove leading 0s
+}
+
+function readString(bytes, offset, length) {
+  const sub = bytes.slice(offset, offset + length);
+  try {
+    return new TextDecoder('utf-8').decode(sub);
+  } catch {
+    return new TextDecoder('latin1').decode(sub);
+  }
+}
+
+function calculateChecksum(bytes) {
+  return bytes.reduce((checksum, b) => checksum ^ b, 0);
+}
+
+function unescape(bytes) {
+  const result = [];
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x7d) {
+      if (i + 1 < bytes.length) {
+        if (bytes[i + 1] === 0x01) {
+          result.push(0x7d);
+          i++;
+        } else if (bytes[i + 1] === 0x02) {
+          result.push(0x7e);
+          i++;
+        } else {
+          result.push(0x7d);
+        }
+      }
+    } else {
+      result.push(bytes[i]);
+    }
+  }
+  return new Uint8Array(result);
+}
+
+function parseHeader(bytes) {
+  let offset = 0;
+  const messageId = readWord(bytes, offset);
+  offset += 2;
+
+  const bodyProps = readWord(bytes, offset);
+  offset += 2;
+
+  const terminalMobileNo = readBcd(bytes, offset, 6);
+  offset += 6;
+
+  const serialNo = readWord(bytes, offset);
+  offset += 2;
+
+  let packetItems = null;
+  if ((bodyProps >> 13) & 0x01) {
+    const totalPackets = readWord(bytes, offset);
+    offset += 2;
+    const sequenceNo = readWord(bytes, offset);
+    offset += 2;
+    packetItems = { totalPackets, sequenceNo };
+  }
+
+  const header = {
+    messageId,
+    messageBodyProperties: bodyProps,
+    terminalMobileNo,
+    messageSerialNo: serialNo,
+    packetItems
+  };
+
+  return { header, offset };
+}
+
+function parseMessageBody(header, bytes) {
+  let offset = 0;
+
+  if (header.messageId === 0x0100) {
+    const provincialId = readWord(bytes, offset);
+    offset += 2;
+
+    const cityId = readWord(bytes, offset);
+    offset += 2;
+
+    const manufacturerId = readBytes(bytes, offset, 5);
+    offset += 5;
+
+    const terminalModels = readBytes(bytes, offset, 8);
+    offset += 8;
+
+    const terminalId = readBytes(bytes, offset, 7);
+    offset += 7;
+
+    const licensePlateColor = bytes[offset++];
+    const licensePlate = readString(bytes, offset, bytes.length - offset);
+
+    return {
+      type: 'TerminalRegisterMessage',
+      messageId: `0x${header.messageId.toString(16).padStart(4, '0')}`,
+      serialNo: header.messageSerialNo,
+      terminalMobileNo: header.terminalMobileNo,
+      provincialId,
+      cityId,
+      manufacturerId: [...manufacturerId].map(b => b.toString(16).padStart(2, '0')).join(''),
+      terminalModels: [...terminalModels].map(b => b.toString(16).padStart(2, '0')).join(''),
+      terminalId: [...terminalId].map(b => b.toString(16).padStart(2, '0')).join(''),
+      licensePlateColor,
+      licensePlate
+    };
+  }
+
+  return null;
+}
+
+function parse(hexString) {
+  const message = hexToBytes(hexString);
+
+  if (message[0] !== 0x7e || message[message.length - 1] !== 0x7e) {
+    throw new Error('Invalid message framing.');
+  }
+
+  const escaped = message.slice(1, message.length - 1);
+  const unescaped = unescape(escaped);
+
+  if (unescaped.length < 13) {
+    throw new Error('Unescaped message too short.');
+  }
+
+  const receivedChecksum = unescaped[unescaped.length - 1];
+  const data = unescaped.slice(0, unescaped.length - 1);
+  const calculated = calculateChecksum(data);
+
+  if (receivedChecksum !== calculated) {
+    throw new Error(`Checksum mismatch. Received: 0x${receivedChecksum.toString(16)}, Expected: 0x${calculated.toString(16)}`);
+  }
+
+  const { header, offset } = parseHeader(data);
+  const body = data.slice(offset);
+  return parseMessageBody(header, body);
+}
