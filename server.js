@@ -48,10 +48,7 @@ const deviceServer = net.createServer((socket) => {
      const parsedMessage = parser.parse(rawMessage);
  
      if (parsedMessage instanceof TerminalRegisterMessage) {
-       console.log('\nParsed JavaScript Message with trimmed Mobile No:');
-       console.log(parsedMessage.toString());
-
-       console.log('✅ Parsed message:\n', parsedMessage.toString());
+           console.log('✅ Parsed message:\n', parsedMessage.toString());
   
     
     
