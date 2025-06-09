@@ -50,15 +50,17 @@ const deviceServer = net.createServer((socket) => {
      if (parsedMessage instanceof TerminalRegisterMessage) {
            console.log('✅ Parsed message:\n', parsedMessage.toString());
   
-    
+           console.log('='.repeat(50) + '\n');
     
      } else {
        console.log('\nJavaScript: Failed to parse message or unsupported message type for the provided string.');
+       console.log('='.repeat(50) + '\n');
      }
    } catch (e) {
      console.error('JavaScript Error:', e);
+     console.log('='.repeat(50) + '\n');
    }
-   console.log('='.repeat(50) + '\n');
+ 
 
 
     // Uncomment this line to enable parsing
