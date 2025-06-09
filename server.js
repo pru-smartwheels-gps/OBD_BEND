@@ -15,34 +15,6 @@ const DEVICE_PORT = process.env.DEVICE_PORT || 9001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const SEND_TEST_DATA = process.env.SEND_TEST_DATA === 'true' || NODE_ENV === 'development';
 
-// function parseGS22LocationPacket(hexString) {
-//   const data = hexString.replace(/\s+/g, '').toUpperCase();
-//   const bytes = data.match(/.{1,2}/g);
-//   if (!bytes || bytes.length < 40) return { error: 'Invalid packet length' };
-
-//   const latitude = parseInt(bytes.slice(18, 22).join(''), 16) / 1e6;
-//   const longitude = parseInt(bytes.slice(22, 26).join(''), 16) / 1e6;
-//   const altitude = parseInt(bytes.slice(26, 28).join(''), 16);
-//   const speed = parseInt(bytes.slice(28, 30).join(''), 16) / 10;
-//   const direction = parseInt(bytes.slice(30, 32).join(''), 16);
-//   const timeBytes = bytes.slice(32, 38);
-//   const timestamp = `20${timeBytes[0]}-${timeBytes[1]}-${timeBytes[2]} ${timeBytes[3]}:${timeBytes[4]}:${timeBytes[5]}`;
-
-//   const mileage = bytes[38] === '01'
-//     ? parseInt(bytes.slice(40, 44).join(''), 16) / 10
-//     : null;
-
-//   return {
-//     latitude: latitude.toFixed(6),
-//     longitude: longitude.toFixed(6),
-//     altitude: `${altitude} m`,
-//     speed: `${speed} km/h`,
-//     direction,
-//     timestamp,
-//     mileage: mileage !== null ? `${mileage} km` : 'N/A'
-//   };
-// }
-
 // === GS22 GPS Device TCP Server ===
 const deviceServer = net.createServer((socket) => {
   console.log('✅ GS22 device connected');
@@ -66,22 +38,42 @@ const deviceServer = net.createServer((socket) => {
     const formatted  =data.toString('hex').match(/.{1,2}/g).join(' ')
     console.log('📤 Raw data buffer (complete):', raw);
    // console.log('📤 Raw data buffer (formatted):', formatted);
-  
-   const parsed = parse(raw);
-
    console.log('⏰ Timestamp:', new Date().toISOString());
-   console.log('✅ Parsed message:\n', parsed);
+ 
+
+   const parser = new ProtocolParser();
+
+   try {
+     const rawMessage = hexToBytes(raw);
+     const parsedMessage = parser.parse(rawMessage);
+ 
+     if (parsedMessage instanceof TerminalRegisterMessage) {
+       console.log('\nParsed JavaScript Message with trimmed Mobile No:');
+       console.log(parsedMessage.toString());
+
+       console.log('✅ Parsed message:\n', parsedMessage.toString());
+  
+    
+    
+     } else {
+       console.log('\nJavaScript: Failed to parse message or unsupported message type for the provided string.');
+     }
+   } catch (e) {
+     console.error('JavaScript Error:', e);
+   }
    console.log('='.repeat(50) + '\n');
+
+
     // Uncomment this line to enable parsing
     // const parsed = parseGS22LocationPacket(hexStr);
     // console.log('📤 Parsed:', parsed);
 
-    if (frontendSocket) {
-      frontendSocket.write(JSON.stringify({raw: raw, hex: formatted}));
-      console.log('📤 Data forwarded to Flutter client');
-    } else {
-      console.log('⚠️ No Flutter client connected to forward data');
-    }
+    // if (frontendSocket) {
+    //   frontendSocket.write(JSON.stringify({raw: raw, hex: formatted}));
+    //   console.log('📤 Data forwarded to Flutter client');
+    // } else {
+    //   console.log('⚠️ No Flutter client connected to forward data');
+    // }
   });
 
   socket.on('end', () => {
@@ -201,176 +193,210 @@ frontendServer.listen(CLIENT_PORT, () => {
 });
 
 
-/// parsing logic
-function hexToBytes(hex) {
-  const cleaned = hex.replace(/[^0-9a-fA-F]/g, '');
-  const result = [];
-  for (let i = 0; i < cleaned.length; i += 2) {
-    result.push(parseInt(cleaned.substr(i, 2), 16));
-  }
-  return new Uint8Array(result);
-}
+////////
+//parsing logic
 
-function readWord(bytes, offset) {
-  return (bytes[offset] << 8) | bytes[offset + 1];
-}
 
-function readDWord(bytes, offset) {
-  return (
-    (bytes[offset] << 24) |
-    (bytes[offset + 1] << 16) |
-    (bytes[offset + 2] << 8) |
-    bytes[offset + 3]
-  );
-}
+// --- Helper Functions for Data Types ---
+// (Copy-paste these from the previous JavaScript parser response if you run this in a new file,
+// ensure the full ProtocolParser and message classes are present)
 
-function readBytes(bytes, offset, length) {
-  return bytes.slice(offset, offset + length);
-}
+// Data type readers (updated readBcd)
+function readByte(data, offset) { return data[offset]; }
+function readWord(data, offset) { return (data[offset] << 8) | data[offset + 1]; }
+function readDWord(data, offset) { return (data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3]; }
+function readBytes(data, offset, length) { return data.subarray(offset, offset + length); }
 
-function readBcd(bytes, offset, length) {
-  let result = '';
+function readBcd(data, offset, length) {
+  let bcdString = '';
   for (let i = 0; i < length; i++) {
-    const byte = bytes[offset + i];
-    const high = (byte >> 4) & 0x0F;
-    const low = byte & 0x0F;
-    result += `${high}${low}`;
+    const byte = data[offset + i];
+    const highNibble = (byte >> 4) & 0x0f;
+    const lowNibble = byte & 0x0f;
+    bcdString += `${highNibble}${lowNibble}`;
   }
-  return result.replace(/^0+(?!$)/, ''); // Remove leading 0s
+  // Trim leading '0' if present and the string is not just "0"
+  return bcdString.startsWith('0') && bcdString.length > 1 ? bcdString.substring(1) : bcdString;
 }
 
-function readString(bytes, offset, length) {
-  const sub = bytes.slice(offset, offset + length);
-  try {
-    return new TextDecoder('utf-8').decode(sub);
-  } catch {
-    return new TextDecoder('latin1').decode(sub);
+function readString(data, offset, length) {
+  const bytes = data.subarray(offset, offset + length);
+  try { return new TextDecoder('utf-8').decode(bytes); }
+  catch (e) { return new TextDecoder('latin1').decode(bytes); }
+}
+
+// Placeholder for full parser code - in a real scenario, this would be in a separate file
+// or copied from the previous response.
+class MessageHeader {
+  constructor(messageId, messageBodyProperties, terminalMobileNo, messageSerialNo, packetItems = null) {
+    this.messageId = messageId;
+    this.messageBodyProperties = messageBodyProperties;
+    this.terminalMobileNo = terminalMobileNo; // This will use the updated readBcd
+    this.messageSerialNo = messageSerialNo;
+    this.packetItems = packetItems;
+  }
+  get isSubpackaged() { return ((this.messageBodyProperties >> 13) & 0x01) === 1; }
+  get messageBodyLength() { return this.messageBodyProperties & 0x3ff; }
+  get dataEncryptionWay() { return (this.messageBodyProperties >> 10) & 0x07; }
+}
+
+class MessagePacketPackageItems {
+  constructor(totalPackets, packetSequenceNo) {
+    this.totalPackets = totalPackets;
+    this.packetSequenceNo = packetSequenceNo;
   }
 }
 
-function calculateChecksum(bytes) {
-  return bytes.reduce((checksum, b) => checksum ^ b, 0);
+class ProtocolMessage {
+  constructor(header) { this.header = header; }
 }
 
-function unescape(bytes) {
-  const result = [];
-  for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0x7d) {
-      if (i + 1 < bytes.length) {
-        if (bytes[i + 1] === 0x01) {
-          result.push(0x7d);
-          i++;
-        } else if (bytes[i + 1] === 0x02) {
-          result.push(0x7e);
-          i++;
-        } else {
-          result.push(0x7d);
-        }
-      }
-    } else {
-      result.push(bytes[i]);
+class TerminalRegisterMessage extends ProtocolMessage {
+  constructor(header, provincialId, cityId, manufacturerId, terminalModels, terminalId, licensePlateColor, licensePlate) {
+    super(header);
+    this.provincialId = provincialId;
+    this.cityId = cityId;
+    this.manufacturerId = manufacturerId;
+    this.terminalModels = terminalModels;
+    this.terminalId = terminalId;
+    this.licensePlateColor = licensePlateColor;
+    this.licensePlate = licensePlate;
+  }
+  toString() {
+    return (
+      `TerminalRegisterMessage(\n` +
+      `  Message ID: 0x${this.header.messageId.toString(16).padStart(4, '0')},\n` +
+      `  Serial No: ${this.header.messageSerialNo},\n` +
+      `  Terminal Mobile No: ${this.header.terminalMobileNo},\n` + // This will now be trimmed
+      `  Provincial ID: 0x${this.provincialId.toString(16).padStart(4, '0')},\n` +
+      `  City ID: 0x${this.cityId.toString(16).padStart(4, '0')},\n` +
+      `  Manufacturer ID: ${Array.from(this.manufacturerId).map((b) => b.toString(16).padStart(2, '0')).join('')},\n` +
+      `  Terminal Models: ${Array.from(this.terminalModels).map((b) => b.toString(16).padStart(2, '0')).join('')},\n` +
+      `  Terminal ID: ${Array.from(this.terminalId).map((b) => b.toString(16).padStart(2, '0')).join('')},\n` +
+      `  License Plate Color: ${this.licensePlateColor},\n` +
+      `  License Plate: "${this.licensePlate}"\n` +
+      `)`
+    );
+  }
+}
+
+class ProtocolParser {
+  unescape(escapedBytes) {
+    const unescaped = [];
+    for (let i = 0; i < escapedBytes.length; i++) {
+      if (escapedBytes[i] === 0x7d) {
+        if (i + 1 < escapedBytes.length) {
+          if (escapedBytes[i + 1] === 0x01) { unescaped.push(0x7d); i++; }
+          else if (escapedBytes[i + 1] === 0x02) { unescaped.push(0x7e); i++; }
+          else { unescaped.push(0x7d); }
+        } else { unescaped.push(0x7d); }
+      } else { unescaped.push(escapedBytes[i]); }
+    }
+    return new Uint8Array(unescaped);
+  }
+
+  calculateChecksum(data) {
+    if (data.length === 0) return 0;
+    let checksum = 0;
+    for (const byte of data) { checksum ^= byte; }
+    return checksum;
+  }
+
+  parseHeader(payload) {
+    let offset = 0;
+    const messageId = readWord(payload, offset); offset += 2;
+    const messageBodyProperties = readWord(payload, offset); offset += 2;
+    const messageBodyLength = messageBodyProperties & 0x3ff;
+    const terminalMobileNo = readBcd(payload, offset, 6); offset += 6; // This will use the updated readBcd
+    const messageSerialNo = readWord(payload, offset); offset += 2;
+
+    let packetItems = null;
+    if (((messageBodyProperties >> 13) & 0x01) === 1) {
+      const totalPackets = readWord(payload, offset); offset += 2;
+      const packetSequenceNo = readWord(payload, offset); offset += 2;
+      packetItems = new MessagePacketPackageItems(totalPackets, packetSequenceNo);
+    }
+    const header = new MessageHeader(messageId, messageBodyProperties, terminalMobileNo, messageSerialNo, packetItems);
+    const messageContentStart = offset;
+    const messageBodyAndChecksum = payload.subarray(messageContentStart);
+    return { header: header, messageBodyAndChecksum: messageBodyAndChecksum, headerLength: messageContentStart, expectedBodyLength: messageBodyLength, };
+  }
+
+  parseMessageBody(header, messageBodyBytes) {
+    let offset = 0;
+    switch (header.messageId) {
+      case 0x0100: // Terminal Register
+        const provincialId = readWord(messageBodyBytes, offset); offset += 2;
+        const cityId = readWord(messageBodyBytes, offset); offset += 2;
+        const manufacturerId = readBytes(messageBodyBytes, offset, 5); offset += 5;
+        const terminalModels = readBytes(messageBodyBytes, offset, 8); offset += 8;
+        const terminalId = readBytes(messageBodyBytes, offset, 7); offset += 7;
+        const licensePlateColor = readByte(messageBodyBytes, offset); offset += 1;
+        const licensePlateLength = messageBodyBytes.length - offset;
+        const licensePlate = readString(messageBodyBytes, offset, licensePlateLength);
+        return new TerminalRegisterMessage(header, provincialId, cityId, manufacturerId, terminalModels, terminalId, licensePlateColor, licensePlate);
+      default: return null;
     }
   }
-  return new Uint8Array(result);
+
+  parse(rawMessage) {
+    if (rawMessage.length < 2 || rawMessage[0] !== 0x7e || rawMessage[rawMessage.length - 1] !== 0x7e) {
+      console.error('Error: Message missing identity bits (0x7e) or too short.');
+      return null;
+    }
+    const escapedPayload = rawMessage.subarray(1, rawMessage.length - 1);
+    const unescapedPayload = this.unescape(escapedPayload);
+    if (unescapedPayload.length < 13) {
+      console.error('Error: Unescaped payload too short to contain header and checksum.');
+      return null;
+    }
+    const receivedChecksum = unescapedPayload[unescapedPayload.length - 1];
+    const dataForChecksum = unescapedPayload.subarray(0, unescapedPayload.length - 1);
+    const calculatedChecksum = this.calculateChecksum(dataForChecksum);
+    if (receivedChecksum !== calculatedChecksum) {
+      console.error(`Error: Checksum mismatch. Received: 0x${receivedChecksum.toString(16)}, Calculated: 0x${calculatedChecksum.toString(16)}`);
+      return null;
+    }
+    const { header, messageBodyAndChecksum, expectedBodyLength } = this.parseHeader(dataForChecksum);
+    const actualMessageBodyBytes = messageBodyAndChecksum.subarray(0, messageBodyAndChecksum.length - 1);
+    if (actualMessageBodyBytes.length !== expectedBodyLength) {
+      console.warn(`Warning: Actual message body length (${actualMessageBodyBytes.length}) does not match expected length (${expectedBodyLength}) from header.`);
+    }
+    return this.parseMessageBody(header, actualMessageBodyBytes);
+  }
 }
 
-function parseHeader(bytes) {
-  let offset = 0;
-  const messageId = readWord(bytes, offset);
-  offset += 2;
-
-  const bodyProps = readWord(bytes, offset);
-  offset += 2;
-
-  const terminalMobileNo = readBcd(bytes, offset, 6);
-  offset += 6;
-
-  const serialNo = readWord(bytes, offset);
-  offset += 2;
-
-  let packetItems = null;
-  if ((bodyProps >> 13) & 0x01) {
-    const totalPackets = readWord(bytes, offset);
-    offset += 2;
-    const sequenceNo = readWord(bytes, offset);
-    offset += 2;
-    packetItems = { totalPackets, sequenceNo };
+// Function to convert hex string to Uint8Array
+function hexToBytes(hex) {
+  if (hex.length % 2 !== 0) {
+    throw new Error("Input hex string must have an even length.");
   }
-
-  const header = {
-    messageId,
-    messageBodyProperties: bodyProps,
-    terminalMobileNo,
-    messageSerialNo: serialNo,
-    packetItems
-  };
-
-  return { header, offset };
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
 }
 
-function parseMessageBody(header, bytes) {
-  let offset = 0;
+// // // Main execution for JavaScript
+// function runJsCode() {
+//   const parser = new ProtocolParser();
+//   const hexString = "160301007b0100007703037d3876d74cc29dc4515c951d5db9b69022e8b3d167b9b640128592a04ca97cbc00001ac02fc02bc011c007c013c009c014c00a0005002f0035c012000a01000034000500050100000000000a00080006001700180019000b00020100000d0010000e0401040302010203040105010601ff01000100";
 
-  if (header.messageId === 0x0100) {
-    const provincialId = readWord(bytes, offset);
-    offset += 2;
+//   try {
+//     const rawMessage = hexToBytes(hexString);
+//     const parsedMessage = parser.parse(rawMessage);
 
-    const cityId = readWord(bytes, offset);
-    offset += 2;
+//     if (parsedMessage instanceof TerminalRegisterMessage) {
+//       console.log('\nParsed JavaScript Message with trimmed Mobile No:');
+//       console.log(parsedMessage.toString());
+//     } else {
+//       console.log('\nJavaScript: Failed to parse message or unsupported message type for the provided string.');
+//     }
+//   } catch (e) {
+//     console.error('JavaScript Error:', e);
+//   }
+// }
 
-    const manufacturerId = readBytes(bytes, offset, 5);
-    offset += 5;
-
-    const terminalModels = readBytes(bytes, offset, 8);
-    offset += 8;
-
-    const terminalId = readBytes(bytes, offset, 7);
-    offset += 7;
-
-    const licensePlateColor = bytes[offset++];
-    const licensePlate = readString(bytes, offset, bytes.length - offset);
-
-    return {
-      type: 'TerminalRegisterMessage',
-      messageId: `0x${header.messageId.toString(16).padStart(4, '0')}`,
-      serialNo: header.messageSerialNo,
-      terminalMobileNo: header.terminalMobileNo,
-      provincialId,
-      cityId,
-      manufacturerId: [...manufacturerId].map(b => b.toString(16).padStart(2, '0')).join(''),
-      terminalModels: [...terminalModels].map(b => b.toString(16).padStart(2, '0')).join(''),
-      terminalId: [...terminalId].map(b => b.toString(16).padStart(2, '0')).join(''),
-      licensePlateColor,
-      licensePlate
-    };
-  }
-
-  return null;
-}
-
-function parse(hexString) {
-  const message = hexToBytes(hexString);
-
-  if (message[0] !== 0x7e || message[message.length - 1] !== 0x7e) {
-    throw new Error('Invalid message framing.');
-  }
-
-  const escaped = message.slice(1, message.length - 1);
-  const unescaped = unescape(escaped);
-
-  if (unescaped.length < 13) {
-    throw new Error('Unescaped message too short.');
-  }
-
-  const receivedChecksum = unescaped[unescaped.length - 1];
-  const data = unescaped.slice(0, unescaped.length - 1);
-  const calculated = calculateChecksum(data);
-
-  if (receivedChecksum !== calculated) {
-    throw new Error(`Checksum mismatch. Received: 0x${receivedChecksum.toString(16)}, Expected: 0x${calculated.toString(16)}`);
-  }
-
-  const { header, offset } = parseHeader(data);
-  const body = data.slice(offset);
-  return parseMessageBody(header, body);
-}
+// // Call the function to run the example
+// runJsCode();
