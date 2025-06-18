@@ -42,8 +42,12 @@ const deviceServer = net.createServer((socket) => {
     const raw = data.toString();
     const formatted = data.toString('hex').match(/.{1,2}/g).join(' ');
     console.log('📤 Raw data buffer (complete):', raw);
-    console.log('⏰ Timestamp:', new Date().toISOString());
-
+    
+    // Convert to Indian time (UTC+5:30)
+    const date = new Date();
+    const istTime = new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
+    console.log('⏰ Timestamp (IST):', istTime.toISOString());
+    
     try {
       const parsedData = queclink.parse(data);
       console.log('✅ Parsed message:\n', JSON.stringify(parsedData, null, 2));
