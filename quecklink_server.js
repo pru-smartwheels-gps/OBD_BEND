@@ -1,7 +1,7 @@
 import net from 'net';
 import dotenv from 'dotenv';
 import queclink from 'queclink-parser';
-import { frontendSocket, frontendServer } from './flutter-client.js';
+//import { frontendSocket, frontendServer } from './flutter-client.js';
 
 // Load environment variables
 dotenv.config();
@@ -26,6 +26,18 @@ const deviceServer = net.createServer((socket) => {
     console.log('🔗 GS22 socket connect event triggered');
   });
 
+  socket.on('error', (error) => {
+    if (error.code === 'ECONNRESET') {
+      console.log('📡 Client connection was reset:', socket.remoteAddress);
+    } else {
+      console.error('Socket error:', error);
+    }
+  });
+
+  socket.on('close', () => {
+    console.log('🔌 Client disconnected:', socket.remoteAddress);
+  });
+
   socket.on('data', (data) => {   
     const raw = data.toString();
     const formatted = data.toString('hex').match(/.{1,2}/g).join(' ');
@@ -37,21 +49,29 @@ const deviceServer = net.createServer((socket) => {
       console.log('✅ Parsed message:\n', JSON.stringify(parsedData, null, 2));
       console.log('='.repeat(50) + '\n');
 
-      if (frontendSocket) {
-        frontendSocket.write(JSON.stringify({
-          raw: raw,
-          hex: formatted,
-          parsed: parsedData
-        }));
-        console.log('📤 Data forwarded to Flutter client');
-      } else {
-        console.log('⚠️ No Flutter client connected to forward data');
-      }
+      // if (frontendSocket) {
+      //   try {
+      //     frontendSocket.write(JSON.stringify({
+      //       raw: raw,
+      //       hex: formatted,
+      //       parsed: parsedData
+      //     }));
+      //     console.log('📤 Data forwarded to Flutter client');
+      //   } catch (err) {
+      //     console.log('⚠️ Error forwarding data to Flutter client:', err.message);
+      //   }
+      // } else {
+      //   console.log('⚠️ No Flutter client connected to forward data');
+      // }
     } catch (e) {
       console.error('Parser Error:', e);
       console.log('='.repeat(50) + '\n');
     }
   });
+});
+
+deviceServer.on('error', (error) => {
+  console.error('Server error:', error);
 });
 
 deviceServer.listen(DEVICE_PORT, () => {
