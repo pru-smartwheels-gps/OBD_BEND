@@ -50,7 +50,7 @@ const deviceServer = net.createServer((socket) => {
     console.log('⏰ Timestamp (IST):', istTime.toISOString());
     
     try {
-
+console.log(data.toString());
 const parser = new QueclinkParser();
 const parsedData = parser.parse(data);
 console.log(parsedData);
