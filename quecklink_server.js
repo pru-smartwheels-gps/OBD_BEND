@@ -52,7 +52,7 @@ const deviceServer = net.createServer((socket) => {
     try {
 console.log(data.toString());
 const parser = new QueclinkParser();
-const parsedData = parser.parse(data);
+const parsedData = parser.parse(data.toString());
 console.log(parsedData);
       // if (frontendSocket) {
       //   try {
