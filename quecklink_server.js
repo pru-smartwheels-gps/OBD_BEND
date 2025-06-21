@@ -1,7 +1,9 @@
 import net from 'net';
 import dotenv from 'dotenv';
-import queclink from 'queclink-parser';
 //import { frontendSocket, frontendServer } from './flutter-client.js';
+
+import QueclinkParser from './parser.js';
+
 
 // Load environment variables
 dotenv.config();
@@ -11,6 +13,8 @@ const DEVICE_PORT = process.env.DEVICE_PORT || 9001;
 // === Environment configuration ===
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const SEND_TEST_DATA = process.env.SEND_TEST_DATA === 'true' || NODE_ENV === 'development';
+
+
 
 // === GS22 GPS Device TCP Server ===
 const deviceServer = net.createServer((socket) => {
@@ -39,20 +43,17 @@ const deviceServer = net.createServer((socket) => {
   });
 
   socket.on('data', (data) => {   
-    const raw = data.toString();
-    const formatted = data.toString('hex').match(/.{1,2}/g).join(' ');
-    console.log('📤 Raw data buffer (complete):', raw);
-    
+
     // Convert to Indian time (UTC+5:30)
     const date = new Date();
     const istTime = new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
     console.log('⏰ Timestamp (IST):', istTime.toISOString());
     
     try {
-      const parsedData = queclink.parse(data);
-      console.log('✅ Parsed message:\n', JSON.stringify(parsedData, null, 2));
-      console.log('='.repeat(50) + '\n');
 
+const parser = new QueclinkParser();
+const parsedData = parser.parse(data);
+console.log(parsedData);
       // if (frontendSocket) {
       //   try {
       //     frontendSocket.write(JSON.stringify({
